@@ -142,68 +142,72 @@ main() {
     local auto_block_marker_start="# >>> codex vscode tmux auto-attach >>>"
     local auto_block_marker_end="# <<< codex vscode tmux auto-attach <<<"
     local auto_block
-    read -r -d '' auto_block <<'EOF'
+    auto_block=$(cat <<'EOF'
 # >>> codex vscode tmux auto-attach >>>
-if [ -z "$TMUX" ] && [ -t 1 ] && [ "${TERM_PROGRAM:-}" = "vscode" ]; then
-    if command -v tmux >/dev/null 2>&1; then
-        session="__SESSION_NAME__"
-        workspace="${VSCODE_CWD:-$PWD}"
+if [ -z "$TMUX" ] && [ -t 1 ]; then
+    if [ "${TERM_PROGRAM:-}" = "vscode" ] || [ -n "${VSCODE_SHELL_INTEGRATION:-}" ] || [ -n "${VSCODE_IPC_HOOK_CLI:-}" ]; then
+        if command -v tmux >/dev/null 2>&1; then
+            session="__SESSION_NAME__"
+            workspace="${VSCODE_CWD:-$PWD}"
 
-        # Build a readable window slug from the workspace path.
-        window_slug="${workspace##*/}"
-        [ -n "$window_slug" ] || window_slug="vscode"
-        window_slug=$(printf '%s' "$window_slug" | tr -cs '[:alnum:]._-' '_')
+            # Build a readable window slug from the workspace path.
+            window_slug="${workspace##*/}"
+            [ -n "$window_slug" ] || window_slug="vscode"
+            window_slug=$(printf '%s' "$window_slug" | tr -cs '[:alnum:]._-' '_')
 
-        target_window=""
-        need_cd=""
-        if ! tmux has-session -t "$session" 2>/dev/null; then
-            tmux new-session -d -s "$session" -c "$workspace" -n "$window_slug"
-            tmux set-option -w -t "$session:$window_slug" @vscode_root "$workspace" >/dev/null
-            target_window="$window_slug"
-            need_cd=1
-        else
-            existing_window=$(tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null | while IFS= read -r name; do
-                path=$(tmux show-option -w -v -t "$session:$name" @vscode_root 2>/dev/null || true)
-                if [ "${path:-}" = "$workspace" ]; then
-                    printf '%s' "$name"
-                    break
-                fi
-            done)
-
-            if [ -n "$existing_window" ]; then
-                target_window="$existing_window"
-            else
-                candidate="$window_slug"
-                if tmux list-windows -t "$session" -F '#{window_name}' | grep -Fxq "$candidate"; then
-                    idx=2
-                    while tmux list-windows -t "$session" -F '#{window_name}' | grep -Fxq "${window_slug}-${idx}"; do
-                        idx=$((idx + 1))
-                    done
-                    candidate="${window_slug}-${idx}"
-                fi
-                tmux new-window -t "$session" -n "$candidate" -c "$workspace"
-                tmux set-option -w -t "$session:$candidate" @vscode_root "$workspace" >/dev/null
-                target_window="$candidate"
+            target_window=""
+            need_cd=""
+            if ! tmux has-session -t "$session" 2>/dev/null; then
+                tmux new-session -d -s "$session" -c "$workspace" -n "$window_slug"
+                tmux set-option -w -t "$session:$window_slug" @vscode_root "$workspace" >/dev/null
+                target_window="$window_slug"
                 need_cd=1
+            else
+                existing_window=$(tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null | while IFS= read -r name; do
+                    path=$(tmux show-option -w -v -t "$session:$name" @vscode_root 2>/dev/null || true)
+                    if [ "${path:-}" = "$workspace" ]; then
+                        printf '%s' "$name"
+                        break
+                    fi
+                done)
+
+                if [ -n "$existing_window" ]; then
+                    target_window="$existing_window"
+                else
+                    candidate="$window_slug"
+                    if tmux list-windows -t "$session" -F '#{window_name}' | grep -Fxq "$candidate"; then
+                        idx=2
+                        while tmux list-windows -t "$session" -F '#{window_name}' | grep -Fxq "${window_slug}-${idx}"; do
+                            idx=$((idx + 1))
+                        done
+                        candidate="${window_slug}-${idx}"
+                    fi
+                    tmux new-window -t "$session" -n "$candidate" -c "$workspace"
+                    tmux set-option -w -t "$session:$candidate" @vscode_root "$workspace" >/dev/null
+                    target_window="$candidate"
+                    need_cd=1
+                fi
             fi
-        fi
 
-        if [ -n "$need_cd" ] && [ -n "$target_window" ]; then
-            tmux send-keys -t "$session:$target_window" "cd" Space "--" Space
-            tmux send-keys -t "$session:$target_window" -l "$workspace"
-            tmux send-keys -t "$session:$target_window" C-m
-        fi
+            if [ -n "$need_cd" ] && [ -n "$target_window" ]; then
+                tmux send-keys -t "$session:$target_window" "cd" Space "--" Space
+                tmux send-keys -t "$session:$target_window" -l "$workspace"
+                tmux send-keys -t "$session:$target_window" C-m
+            fi
 
-        client_session="${session}-client-$$"
-        if ! tmux has-session -t "$client_session" 2>/dev/null; then
-            tmux new-session -d -s "$client_session" -t "$session"
-        fi
+            client_session="${session}-client-$$"
+            if ! tmux has-session -t "$client_session" 2>/dev/null; then
+                tmux new-session -d -s "$client_session" -t "$session"
+            fi
 
-        tmux select-window -t "$client_session:$target_window" 2>/dev/null
-        exec tmux attach-session -t "$client_session"
+            tmux select-window -t "$client_session:$target_window" 2>/dev/null
+            exec tmux attach-session -t "$client_session"
+        fi
     fi
 fi
+
 EOF
+)
 
     auto_block=${auto_block//__SESSION_NAME__/$SESSION_NAME}
 
