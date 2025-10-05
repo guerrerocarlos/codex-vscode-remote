@@ -219,6 +219,55 @@ EOF
     fi
     printf '\n%s\n%s\n' "$auto_block" "$auto_block_marker_end" >>"$bashrc"
 
+    local nvm_marker_start="# >>> codex nvm setup >>>"
+    local nvm_marker_end="# <<< codex nvm setup <<<"
+    local nvm_block
+    nvm_block=$(cat <<'EOF'
+# >>> codex nvm setup >>>
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+elif [ -s "/usr/share/nvm/init-nvm.sh" ]; then
+    . "/usr/share/nvm/init-nvm.sh"
+fi
+if [ -s "$NVM_DIR/bash_completion" ]; then
+    . "$NVM_DIR/bash_completion"
+fi
+# <<< codex nvm setup <<<
+EOF
+)
+
+    local profile_files=("$bashrc" "$HOME/.profile" "$HOME/.bash_profile")
+    local profile
+    for profile in "${profile_files[@]}"; do
+        local name
+        name=$(basename "$profile")
+        if [ ! -f "$profile" ]; then
+            log "Creating $profile"
+            touch "$profile"
+        fi
+
+        if grep -q "$nvm_marker_start" "$profile" 2>/dev/null; then
+            log "Refreshing NVM init block in $name"
+            sed -i "/$nvm_marker_start/,/$nvm_marker_end/d" "$profile"
+        else
+            log "Adding NVM init block to $name"
+        fi
+
+        printf '\n%s\n' "$nvm_block" >>"$profile"
+    done
+
+    if [ -d "$HOME/.nvm" ]; then
+        log "Priming nvm default environment"
+        bash -lc 'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; nvm use default >/dev/null 2>&1 || nvm use --lts >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true' || true
+
+        if bash -lc 'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; nvm use default >/dev/null 2>&1 || nvm use --lts >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true; command -v codex >/dev/null 2>&1'; then
+            log "codex CLI detected via nvm"
+        else
+            log "codex CLI not found after environment copy; install with npm install -g codex if required"
+        fi
+    fi
+
     local tmux_conf="$HOME/.tmux.conf"
     local fish_path
     fish_path=$(command -v fish || true)
@@ -259,18 +308,37 @@ end
 EOF
     fi
 
-    # Install Fisher (Fish plugin manager) if missing.
-    if ! fish -lc 'functions -q fisher' >/dev/null 2>&1; then
+    # Install Fisher (Fish plugin manager) if missing, but tolerate offline environments.
+    local fisher_available=0
+    if fish -lc 'functions -q fisher' >/dev/null 2>&1; then
+        fisher_available=1
+    else
         log "Installing Fisher"
-        fish -lc 'curl -fsSL https://git.io/fisher | source; and fisher install jorgebucaran/fisher'
+        if fish -lc 'curl -fsSL https://git.io/fisher | source; and fisher install jorgebucaran/fisher'; then
+            fisher_available=1
+        else
+            log "Fisher installation failed (likely offline); continuing with any copied configuration"
+        fi
+    fi
+
+    if [ "$fisher_available" -eq 0 ] && fish -lc 'functions -q fisher' >/dev/null 2>&1; then
+        fisher_available=1
     fi
 
     # Ensure nvm.fish plugin is installed for Fish shells.
-    log "Ensuring jorgebucaran/nvm.fish plugin is installed"
-    if ! fish -lc 'fisher list | string match -q "jorgebucaran/nvm.fish"' >/dev/null 2>&1; then
-        fish -lc 'fisher install jorgebucaran/nvm.fish'
+    if [ "$fisher_available" -eq 1 ]; then
+        log "Ensuring jorgebucaran/nvm.fish plugin is installed"
+        if ! fish -lc 'fisher list | string match -q "jorgebucaran/nvm.fish"' >/dev/null 2>&1; then
+            if ! fish -lc 'fisher install jorgebucaran/nvm.fish'; then
+                log "Unable to install nvm.fish via Fisher; leaving existing copy in place"
+            fi
+        else
+            if ! fish -lc 'fisher update jorgebucaran/nvm.fish'; then
+                log "Unable to update nvm.fish (likely offline); keeping current version"
+            fi
+        fi
     else
-        fish -lc 'fisher update jorgebucaran/nvm.fish'
+        log "Fisher not available; assuming nvm.fish files were copied from the source user"
     fi
 
     log "Setup complete. Reload your shell or open a new VS Code terminal to use the configuration."

@@ -120,6 +120,75 @@ copy_ssh_credentials() {
     find "$dst_home/.ssh" -type f -exec chmod 600 {} +
 }
 
+copy_path_if_missing() {
+    local src_home=$1
+    local dst_home=$2
+    local rel_path=$3
+
+    local src="$src_home/$rel_path"
+    local dst="$dst_home/$rel_path"
+
+    if [ ! -e "$src" ]; then
+        return
+    fi
+
+    if [ -e "$dst" ]; then
+        log "Keeping existing $rel_path in $dst_home"
+        return
+    fi
+
+    local parent
+    parent=$(dirname "$dst")
+    if [ ! -d "$parent" ]; then
+        mkdir -p "$parent"
+    fi
+
+    log "Copying $rel_path from source user"
+    cp -a "$src" "$dst"
+
+    local top_component
+    case "$rel_path" in
+        */*)
+            top_component=${rel_path%%/*}
+            ;;
+        *)
+            top_component=$rel_path
+            ;;
+    esac
+
+    if [ -n "$top_component" ] && [ -e "$dst_home/$top_component" ]; then
+        chown -R "$TARGET_USER:$TARGET_USER" "$dst_home/$top_component"
+    else
+        chown -R "$TARGET_USER:$TARGET_USER" "$dst"
+    fi
+}
+
+copy_dev_environment() {
+    local src_home=$1
+    local dst_home=$2
+
+    local -a rel_paths=(
+        ".nvm"
+        ".local/share/nvm"
+        ".config/nvm"
+        ".npmrc"
+        ".npm"
+        ".config/npm"
+        ".local/bin"
+        ".local/share/fisher"
+        ".config/fish/functions"
+        ".config/fish/conf.d"
+        ".config/fish/completions"
+        ".config/fish/fish_plugins"
+        ".config/codex"
+    )
+
+    local rel
+    for rel in "${rel_paths[@]}"; do
+        copy_path_if_missing "$src_home" "$dst_home" "$rel"
+    done
+}
+
 run_as_target() {
     local cmd=$1
     if command -v runuser >/dev/null 2>&1; then
@@ -237,6 +306,7 @@ main() {
     fi
 
     copy_ssh_credentials "$source_home" "$target_home"
+    copy_dev_environment "$source_home" "$target_home"
     configure_git_identity "$target_home"
     configure_sudoers
     bootstrap_target_user "$target_home"
